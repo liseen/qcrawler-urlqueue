@@ -1,23 +1,23 @@
-prefix=/usr/local
+prefix=/opt/qcrawler-thirdparty
 
 .PHONY: all clean distclean
 
 CC=g++
-CPPFLAGS=-g -o0
+CPPFLAGS=-g -o0 -I/opt/qcrawler-thirdparty/include
+LIBS=-L/opt/qcrawler-thirdparty/lib
 
-SOURCES		= url_queue_server.cpp
-OBJECTS		= $(SOURCES:.cpp=.o)
 MODULES		= liburlqueue.so
 
 all: urlqueued $(MODULES)
 
-urlqueued: $(OBJECTS)
-	$(CC) $(CPPFLAGS) -o $@ $^ -levent
+urlqueued: url_queue_server.cpp
+	$(CC) $(CPPFLAGS) -o $@ $^ $(LIBS) -levent
+
 
 $(OBJECTS): url_queue_common.h
 
 $(MODULES): url_queue_client.cpp
-	$(CC) $(CFLAGS) -fPIC -shared -o $@ $<
+	$(CC) $(CFLAGS) $(LIBS) -fPIC -shared -o $@ $<
 	
 clean:
 	rm -f *.o
