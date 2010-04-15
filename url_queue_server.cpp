@@ -1,40 +1,36 @@
 /*
- * libevent echo server example using buffered events.
+ *urlqueued
  */
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <syslog.h>
-#include <signal.h>
-
-/* Required by event.h. */
-#include <sys/time.h>
-
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/time.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <errno.h>
-#include <err.h>
-//#include <queue.h>
+#include <syslog.h>
+#include <signal.h>
 #include <sys/queue.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <err.h>
+#include <errno.h>
 
 /* Libevent. */
 #include <event.h>
 
+#include <string>
+#include <queue>
+#include <map>
+
 #define VERSION "0.0.1"
-/* Port to listen on. */
+/* default port to listen on. */
 #define SERVER_PORT 19854
 int debug = 0;
 
 #define MAX_MESSAGE_SIZE 1048576
 
-#include <string>
-#include <queue>
-#include <map>
+#include "url_queue_common.h"
 
 typedef struct client_st {
     int fd;
@@ -68,7 +64,7 @@ typedef std::map<std::string, host_st>::iterator host_map_it_st;
 static struct event_base *main_base;
 static host_map_st global_host_map;
 static host_map_it_st global_host_map_it = global_host_map.end();
-static unsigned int sleep_cycle = 10;
+static unsigned int sleep_cycle = 5;
 
 unsigned int
 get_current_time() {
@@ -188,12 +184,12 @@ buffered_on_read(struct bufferevent *bev, void *arg)
 // END\r\n
 //
     evb = evbuffer_new();
-    if (strncmp(cmd, "shift", 5) == 0) {
+    if (strncmp(cmd, "get", 3) == 0) {
         global_stats.cmd_shifts++;
         host_map_it_st last_it = global_host_map_it;
 
         if (global_host_map.empty() ) {
-            evbuffer_add_printf(evb, "EMPTY\r\n");
+            evbuffer_add_printf(evb, "END\r\n");
             goto out;
         }
 
@@ -209,12 +205,12 @@ buffered_on_read(struct bufferevent *bev, void *arg)
                 if (!url_queue->empty()) {
                     int need_sleep_time = (*global_host_map_it).second.last_crawl_time + sleep_cycle - current_time;
                     if (need_sleep_time > 0) {
-                        evbuffer_add_printf(evb, "SLEEP %d\r\n", need_sleep_time);
+                        evbuffer_add_printf(evb, "END\r\n", need_sleep_time);
                         global_host_map_it--;
                         goto out;
                     }
                     (*global_host_map_it).second.last_crawl_time = current_time + 1; // for trasfer time
-                    evbuffer_add_printf(evb, "%s\r\n", url_queue->front().c_str());
+                    evbuffer_add_printf(evb, "VALUE %s 0 %d\r\n%s\r\nEND\r\n", URL_QUEUE_KEY_NAME, url_queue->front().size(), url_queue->front().c_str());
                     url_queue->pop();
                     global_stats.dequeue_items++;
                     if (debug) {
@@ -225,19 +221,26 @@ buffered_on_read(struct bufferevent *bev, void *arg)
             }
         } while (global_host_map_it != last_it);
 
-        evbuffer_add_printf(evb, "EMPTY\r\n");
+        evbuffer_add_printf(evb, "END\r\n");
         goto out;
-    } else if (strncmp(cmd, "push", 4) == 0) {
+    } else if (strncmp(cmd, "add", 3) == 0) {
         global_stats.cmd_pushs++;
-        const char *host_begin = cmd + 5;
+        const char *host_begin = cmd + 4;
         const char *host_end = strchr(host_begin, ' ');
         if (host_end == NULL) {
             evbuffer_add_printf(evb, "CLIENT_ERROR %s\r\n", "format error");
             goto out;
         }
 
-        bytes = host_end + 1;
-        int bytes_num = atoi(bytes);
+        const char *flags_begin = host_end + 1;
+        const char *flags_end = strchr(flags_begin + 1, ' ');
+
+        const char *exptime_begin = flags_end + 1;
+        const char *exptime_end = strchr(exptime_begin + 1, ' ');
+        const char *bytes_begin = exptime_end + 1;
+        const char *bytes_end = strchr(bytes_begin + 1 , ' ');
+
+        int bytes_num = atoi(bytes_begin);
         if (bytes_num <= 0) {
             evbuffer_add_printf(evb, "CLIENT_ERROR %s\r\n", "format error");
             goto out;
@@ -259,10 +262,7 @@ buffered_on_read(struct bufferevent *bev, void *arg)
             goto out;
         } else {
             std::string content;
-            content.append(buf, read_cnt);
-            if (debug) {
-                fprintf(stdout, "read count: %d, content: %s\n", read_cnt, content.c_str());
-            }
+            content.append(buf, read_cnt - 2);
             host_map_it_st it = global_host_map.find(host);
             if (it == global_host_map.end()) {
                 std::queue<std::string> *url_queue = new std::queue<std::string>();
@@ -280,7 +280,7 @@ buffered_on_read(struct bufferevent *bev, void *arg)
             evbuffer_add_printf(evb, "STORED\r\n");
             goto out;
         }
-    } else if (strncmp(cmd, "stat", 4) == 0) {
+    } else if (strncmp(cmd, "stats", 5) == 0) {
         char buf[1024];
         memset(buf, 0, 1024);
         int sum = 0;
@@ -328,8 +328,13 @@ buffered_on_error(struct bufferevent *bev, short what, void *arg)
             printf("Client disconnected.\n");
         }
     } else {
+        if (debug) {
+            printf("Client socket error, disconnecting.\n");
+        }
+
         warn("Client socket error, disconnecting.\n");
     }
+
     bufferevent_free(client->buf_ev);
     close(client->fd);
     free(client);
@@ -374,9 +379,11 @@ on_accept(int fd, short ev, void *arg)
 
 void print_usage(int exit_status) {
     printf( "QcrawlerUrlQueue" VERSION "\n");
-    printf("-p <num> TCP port number to listen on(default 19854)\n"
-           "-d            run as a daemon\n"
-           "-v            verbose (print errors/warnings while in event loop)\n");
+    printf("-p <num>     TCP port number to listen on(default 19854)\n"
+           "-c <seconds> cycle time for same host(default 5 seconds)\n"
+           "-d           run as a daemon\n"
+           "-v           verbose (print errors/warnings while in event loop)\n");
+
     exit(exit_status);
 }
 
@@ -385,6 +392,7 @@ main(int argc, char **argv)
 {
     int listen_fd, ch;
     int daemon = 0;
+    int help = 0;
     int port = SERVER_PORT;
     struct sockaddr_in listen_addr;
     struct event ev_accept;
@@ -396,7 +404,7 @@ main(int argc, char **argv)
     signal(SIGINT, signal_handler);
     signal(SIGQUIT, signal_handler);
 
-    while ((ch = getopt(argc, argv, "dvp:")) != -1) {
+    while ((ch = getopt(argc, argv, "hdvp:")) != -1) {
         switch (ch) {
         case 'd':
             daemon = 1;
@@ -404,10 +412,22 @@ main(int argc, char **argv)
         case 'v':
             debug = 1;
             break;
+        case 'h':
+            help = 1;
+            break;
         case 'p':
             port = atoi(optarg);
             break;
+        case 'c':
+            sleep_cycle = atoi(optarg);
+            break;
+        default:
+            print_usage(1);
         }
+    }
+
+    if (help) {
+        print_usage(0);
     }
 
     if (daemon) {
@@ -431,8 +451,6 @@ main(int argc, char **argv)
     clock_handler(0, 0, 0);
     /* initialise stat */
     init_stat();
-
-
 
     /* Create our listening socket. */
     listen_fd = socket(AF_INET, SOCK_STREAM, 0);

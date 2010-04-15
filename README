@@ -1,0 +1,26 @@
+url queue for qcrawler
+
+Install:
+1. install libevent libmemcached
+2. make install prefix=/opt/qcrawler-thirdparty/
+
+Protocal:
+    libmemcached add => url queue push
+    libmemcached get => url queue shift
+
+Api:
+    see url_queue_client.h
+
+    UrlQueueClient client("localhost:19854");
+    client->connect();
+    client->push(host, content);
+
+    std::string content;
+    client->shift(&content);
+
+Run:
+    urlqueued -h
+    urlqueued -d -p 19854 -c <cycle seconds>
+
+Stat:
+    echo -e "stats\r\n" | nc localhost 19854
