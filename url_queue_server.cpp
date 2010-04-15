@@ -209,13 +209,22 @@ buffered_on_read(struct bufferevent *bev, void *arg)
                         global_host_map_it--;
                         goto out;
                     }
-                    (*global_host_map_it).second.last_crawl_time = current_time + 1; // for trasfer time
-                    evbuffer_add_printf(evb, "VALUE %s 0 %d\r\n%s\r\nEND\r\n", URL_QUEUE_KEY_NAME, url_queue->front().size(), url_queue->front().c_str());
-                    url_queue->pop();
-                    global_stats.dequeue_items++;
+                    (*global_host_map_it).second.last_crawl_time = current_time;
+                    evbuffer_add_printf(evb, "VALUE %s 0 %d\r\n", URL_QUEUE_KEY_NAME, url_queue->front().size());
+                    evbuffer_add(evb, (const void*)(url_queue->front().c_str()), url_queue->front().size());
+                    evbuffer_add_printf(evb, "\r\nEND\r\n");
+
                     if (debug) {
                         printf("shift host: %s\n", (*global_host_map_it).first.c_str());
+                        printf("shift content: ");
+                        for (int i = 0; i < url_queue->front().size(); i++) {
+                            int v = (int)(url_queue->front())[i];
+                            printf("%d ", v);
+                        }
+                        printf("\n");
                     }
+                    url_queue->pop();
+                    global_stats.dequeue_items++;
                     goto out;
                 }
             }
@@ -263,6 +272,15 @@ buffered_on_read(struct bufferevent *bev, void *arg)
         } else {
             std::string content;
             content.append(buf, read_cnt - 2);
+            if (debug) {
+                printf("push content: ");
+                for (int i = 0; i < content.size(); i++) {
+                    int v = (int)content[i];
+                    printf("%d ", v);
+                }
+                printf("\n");
+            }
+
             host_map_it_st it = global_host_map.find(host);
             if (it == global_host_map.end()) {
                 std::queue<std::string> *url_queue = new std::queue<std::string>();
@@ -404,7 +422,7 @@ main(int argc, char **argv)
     signal(SIGINT, signal_handler);
     signal(SIGQUIT, signal_handler);
 
-    while ((ch = getopt(argc, argv, "hdvp:")) != -1) {
+    while ((ch = getopt(argc, argv, "hdvc:p:")) != -1) {
         switch (ch) {
         case 'd':
             daemon = 1;

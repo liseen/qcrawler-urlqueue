@@ -19,24 +19,17 @@ my $memd = new Cache::Memcached {
 };
 
 for my $i (1..10) {
-    $memd->add("host.host.host" . $i, ("$i" x 200) . "a");
-    $memd->add("host.host.host" . $i, ("$i" x 200) . "b");
-    $memd->add("host.host.host" . $i, ("$i" x 200) . "c");
+    $memd->add("host.host.host" . $i, "a". ("$i" x 200) . "a");
 }
 
-my $i = 0;
-while (1) {
-    sleep 5;
+for my $i (1..10) {
     my $val = $memd->get("url_queue");
     if ($val) {
-        $i++;
         print "$i: okay\n";
+        print $val . "\n";
     } else {
-        last;
+
     }
-}
-if ($i == 30) {
-    print "all get okay\n"
 }
 
 sleep 10;
