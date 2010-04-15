@@ -17,7 +17,7 @@ urlqueued: url_queue_server.cpp
 $(OBJECTS): url_queue_common.h
 
 $(MODULES): url_queue_client.cpp
-	$(CC) $(CFLAGS) $(LIBS) -levent -fPIC -shared -o $@ $<
+	$(CC) $(CFLAGS) $(LIBS) -levent -lmemcached -fPIC -shared -o $@ $<
 	
 clean:
 	rm -f *.o
