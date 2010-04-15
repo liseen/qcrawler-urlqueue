@@ -12,7 +12,6 @@ public:
     UrlQueueClient(const std::string &queue_server);
     ~UrlQueueClient();
 
-    bool connect();
     bool push(const std::string host, const std::string content);
     bool shift(std::string *str);
 

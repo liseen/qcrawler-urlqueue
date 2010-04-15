@@ -12,7 +12,7 @@ Api:
     see url_queue_client.h
 
     UrlQueueClient client("localhost:19854");
-    client->connect();
+
     client->push(host, content);
 
     std::string content;

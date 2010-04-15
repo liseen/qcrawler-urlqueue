@@ -12,6 +12,14 @@ UrlQueueClient::~UrlQueueClient()
 UrlQueueClient::UrlQueueClient(const std::string &queue_server)
 {
     server_str = queue_server;
+
+    queue  = memcached_create(NULL);
+    memcached_server_st *servers;
+    servers= memcached_servers_parse((char*)server_str.c_str());
+    if (servers != NULL) {
+       memcached_server_push(queue, servers);
+       memcached_server_list_free(servers);
+    }
 }
 
 bool UrlQueueClient::push(const std::string host, const std::string content)
@@ -58,17 +66,3 @@ bool UrlQueueClient::shift(std::string *str)
     return false;
 }
 
-bool UrlQueueClient::connect()
-{
-    queue  = memcached_create(NULL);
-    memcached_server_st *servers;
-    servers= memcached_servers_parse((char*)server_str.c_str());
-    if (servers != NULL) {
-       memcached_server_push(queue, servers);
-       memcached_server_list_free(servers);
-    } else {
-        return false;
-    }
-
-    return true;
-}
