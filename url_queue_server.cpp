@@ -275,6 +275,7 @@ buffered_on_read(struct bufferevent *bev, void *arg)
                 new_host.enqueue_items = 1;
                 new_host.dequeue_items = 0;
                 new_host.url_queue = url_queue;
+                new_host.last_crawl_time = 0;
                 global_host_map[host] = new_host;
             } else {
                 (*it).second.enqueue_items++;
@@ -294,6 +295,7 @@ buffered_on_read(struct bufferevent *bev, void *arg)
         sum += sprintf(buf + sum, "STAT time %d\r\n", time);
         sum += sprintf(buf + sum, "STAT debug %d\r\n", debug);
         sum += sprintf(buf + sum, "STAT sleep_cycle %d\r\n", sleep_cycle);
+        sum += sprintf(buf + sum, "STAT host_items %d\r\n", global_host_map.size());
         sum += sprintf(buf + sum, "STAT enqueue_items %ld\r\n", global_stats.enqueue_items);
         sum += sprintf(buf + sum, "STAT dequeue_items %ld\r\n", global_stats.dequeue_items);
         sum += sprintf(buf + sum, "STAT cmd_pushs %ld\r\n", global_stats.cmd_pushs);
