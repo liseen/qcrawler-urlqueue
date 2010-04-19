@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <getopt.h>
 #include <sys/time.h>
 #include <string.h>
 #include <fcntl.h>
@@ -23,10 +24,9 @@
 #include <queue>
 #include <map>
 
-#define VERSION "0.0.1"
+#define VERSION "0.0.2"
 /* default port to listen on. */
 #define SERVER_PORT 19854
-int debug = 0;
 
 #define MAX_MESSAGE_SIZE 1048576
 
@@ -61,6 +61,8 @@ static stat_st global_stats;
 typedef std::map<std::string, host_st> host_map_st;
 typedef std::map<std::string, host_st>::iterator host_map_it_st;
 
+static int debug = 0;
+static std::string quit_dump_file;
 static struct event_base *main_base;
 static host_map_st global_host_map;
 static host_map_it_st global_host_map_it = global_host_map.end();
@@ -167,22 +169,6 @@ buffered_on_read(struct bufferevent *bev, void *arg)
         return;
     }
 
-// ERROR CLIENT_ERROR SERVER_ERROR <error>\r\n
-// push <host> bytes\r\n
-// <data block>\r\n
-// STORED\r\n
-// NOT_STORED\r\n
-// FULL\r\n
-//
-// shift\r\n
-// <data block>\r\n 
-// or
-// EMPTY\r\n
-//
-// stats\r\n
-// STAT key value\r\n
-// END\r\n
-//
     evb = evbuffer_new();
     if (strncmp(cmd, "get", 3) == 0) {
         global_stats.cmd_shifts++;
@@ -272,7 +258,7 @@ buffered_on_read(struct bufferevent *bev, void *arg)
         } else {
             std::string content;
             content.append(buf, read_cnt - 2);
-            if (debug) {
+            if (debug > 1) {
                 printf("push content: ");
                 for (int i = 0; i < content.size(); i++) {
                     int v = (int)content[i];
@@ -306,6 +292,8 @@ buffered_on_read(struct bufferevent *bev, void *arg)
         unsigned int time = current_time;
         sum += sprintf(buf + sum, "STAT uptime %d\r\n", time - global_stats.uptime);
         sum += sprintf(buf + sum, "STAT time %d\r\n", time);
+        sum += sprintf(buf + sum, "STAT debug %d\r\n", debug);
+        sum += sprintf(buf + sum, "STAT sleep_cycle %d\r\n", sleep_cycle);
         sum += sprintf(buf + sum, "STAT enqueue_items %ld\r\n", global_stats.enqueue_items);
         sum += sprintf(buf + sum, "STAT dequeue_items %ld\r\n", global_stats.dequeue_items);
         sum += sprintf(buf + sum, "STAT cmd_pushs %ld\r\n", global_stats.cmd_pushs);
@@ -318,6 +306,16 @@ buffered_on_read(struct bufferevent *bev, void *arg)
         goto out;
 
     } else if (strncmp(cmd, "clear", 5) == 0) {
+    } else if (strncmp(cmd, "set_debug", 9) == 0) {
+        char *debug_str_begin = cmd + 10;
+        debug = atoi(debug_str_begin);
+        evbuffer_add_printf(evb, "set_debug: %d ok\r\n", debug);
+        goto out;
+    } else if (strncmp(cmd, "set_sleep_cycle", 15) == 0) {
+        char *cycle_str_begin = cmd + 16;
+        sleep_cycle = atoi(cycle_str_begin);
+        evbuffer_add_printf(evb, "set_sleep_cycle: %d ok\r\n", sleep_cycle);
+        goto out;
     } else if (strncmp(cmd, "exit", 4) == 0
                || strncmp(cmd, "quit", 4) == 0) {
         evbuffer_add_printf(evb, "ok bye\n");
@@ -395,14 +393,17 @@ on_accept(int fd, short ev, void *arg)
     global_stats.curr_connections++;
 }
 
-void print_usage(int exit_status) {
-    printf( "QcrawlerUrlQueue" VERSION "\n");
-    printf("-p <num>     TCP port number to listen on(default 19854)\n"
-           "-c <seconds> cycle time for same host(default 5 seconds)\n"
-           "-d           run as a daemon\n"
-           "-v           verbose (print errors/warnings while in event loop)\n");
+void print_usage(FILE* stream, int exit_code) {
+    fprintf(stream, "Usage: urlqueued options " VERSION "\n");
+    fprintf(stream,
+            "  -h --help             Display this usage information.\n"
+            "  -d --deamon           Run as a daemon\n"
+            "  -p --port <num>       TCP port number to listen on(default 19854)\n"
+            "  -c --cycle <secs>     Cycle time for same host(default 5 seconds)\n"
+            "  -q --quit-dump <file> Dump file path on program dying\n"
+            "  -v --verbose          Verbose\n");
 
-    exit(exit_status);
+    exit(exit_code);
 }
 
 int
@@ -422,30 +423,52 @@ main(int argc, char **argv)
     signal(SIGINT, signal_handler);
     signal(SIGQUIT, signal_handler);
 
-    while ((ch = getopt(argc, argv, "hdvc:p:")) != -1) {
-        switch (ch) {
-        case 'd':
-            daemon = 1;
-            break;
-        case 'v':
-            debug = 1;
-            break;
-        case 'h':
-            help = 1;
-            break;
-        case 'p':
-            port = atoi(optarg);
-            break;
-        case 'c':
-            sleep_cycle = atoi(optarg);
-            break;
-        default:
-            print_usage(1);
+    const char* const short_options = "hdvq:c:p:";
+    const struct option long_options[] = {
+        { "help",     0, NULL, 'h' },
+        { "deamon",   0, NULL, 'd' },
+        { "verbose",  0, NULL, 'v' },
+        { "port",     1, NULL, 'p' },
+        { "cycle",    1, NULL, 'c' },
+        { "quit-dump",1, NULL, 'q' },
+        { NULL,       0, NULL, 0   }
+    };
+
+    int next_option;
+    do {
+        next_option = getopt_long (argc, argv, short_options,
+                               long_options, NULL);
+        switch (next_option) {
+            case 'd':
+                daemon = 1;
+                break;
+            case 'v':
+                debug = 1;
+                break;
+            case 'h':
+                help = 1;
+                break;
+            case 'p':
+                port = atoi(optarg);
+                break;
+            case 'c':
+                sleep_cycle = atoi(optarg);
+                break;
+            case 'q':
+                quit_dump_file.append(optarg);
+                break;
+            case -1:
+                break;
+            case '?':
+                print_usage(stderr, 1);
+            default:
+                print_usage(stderr, 1);
         }
-    }
+    } while (next_option != -1);
+
 
     if (help) {
-        print_usage(0);
+        print_usage(stdout, 0);
     }
 
     if (daemon) {
@@ -501,6 +524,26 @@ main(int argc, char **argv)
     event_dispatch();
     shutdown(listen_fd, SHUT_RDWR);
     close(listen_fd);
+
+    if (quit_dump_file.size() > 0) {
+        FILE* outFile = fopen (quit_dump_file.c_str() , "w+");
+        if (outFile == NULL) {
+            perror("Cannot open  persistent file");
+        } else {
+            for (host_map_it_st it = global_host_map.begin(); it != global_host_map.end(); it++) {
+                std::string host = (*it).first;
+                std::queue<std::string> *url_queue = (*global_host_map_it).second.url_queue;
+                while (!url_queue->empty()) {
+                    fprintf(outFile, "VALUE %s 0 %d\r\n%*s\r\n", host.c_str(), url_queue->front().size(), url_queue->front().size(), url_queue->front().c_str());
+                    url_queue->pop();
+                }
+            }
+            fprintf(outFile, "END\r\n");
+            fclose(outFile);
+        }
+
+    }
+
     printf("dying\n");
 
     return 0;

@@ -8,7 +8,7 @@ Protocal:
     libmemcached add => url queue push
     libmemcached get => url queue shift
 
-Api:
+Client Api:
     see url_queue_client.h
 
     UrlQueueClient client("localhost:19854");
@@ -18,9 +18,9 @@ Api:
     std::string content;
     client->shift(&content);
 
-Run:
+Server:
     urlqueued -h
-    urlqueued -d -p 19854 -c <cycle seconds>
+    urlqueued -d -p 19854 -c <cycle seconds>  -q /tmp/quit_dump_file
 
 Stat:
     echo -e "stats\r\n" | nc localhost 19854
