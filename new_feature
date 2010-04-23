@@ -1,0 +1,45 @@
+stats
+STAT uptime 257
+STAT time 1272021049
+STAT debug 1
+STAT sleep_cycle 5
+STAT host_items 1
+STAT enqueue_items 1
+STAT dequeue_items 1
+STAT cmd_pushs 1
+STAT cmd_shifts 6
+STAT cmd_clears 0
+STAT curr_connections 1
+END
+
+stat_host
+STAT jingdian.tuniu.com stop 0
+STAT jingdian.tuniu.com enqueue_items 1
+STAT jingdian.tuniu.com dequeue_items 1
+END
+
+stat_host jingdian.tuniu.com
+STAT jingdian.tuniu.com stop 0
+STAT jingdian.tuniu.com enqueue_items 1
+STAT jingdian.tuniu.com dequeue_items 1
+END
+
+stat_host qunar.com
+END
+
+start_host jingdian.tuniu.com
+start_host ok
+stat_host jingdian.tuniu.com
+STAT jingdian.tuniu.com stop 0
+STAT jingdian.tuniu.com enqueue_items 1
+STAT jingdian.tuniu.com dequeue_items 1
+END
+
+stop_host jingdian.tuniu.com
+stop_host ok
+stat_host jingdian.tuniu.com
+STAT jingdian.tuniu.com stop 1
+STAT jingdian.tuniu.com enqueue_items 1
+STAT jingdian.tuniu.com dequeue_items 1
+END
+
