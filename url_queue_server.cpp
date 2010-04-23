@@ -52,7 +52,7 @@ typedef struct host_st{
     /* for stat */
     unsigned long enqueue_items;
     unsigned long dequeue_items;
-
+    unsigned int stop;
     unsigned int last_crawl_time;
     std::queue<std::string> *url_queue;
 } host_st;
@@ -188,13 +188,14 @@ buffered_on_read(struct bufferevent *bev, void *arg)
 
             if (global_host_map_it != global_host_map.end()) {
                 std::queue<std::string> *url_queue = (*global_host_map_it).second.url_queue;
-                if (!url_queue->empty()) {
+                if (!(*global_host_map_it).second.stop && !url_queue->empty()) {
                     int need_sleep_time = (*global_host_map_it).second.last_crawl_time + sleep_cycle - current_time;
                     if (need_sleep_time > 0) {
                         evbuffer_add_printf(evb, "END\r\n", need_sleep_time);
                         global_host_map_it--;
                         goto out;
                     }
+                    (*global_host_map_it).second.dequeue_items++;
                     (*global_host_map_it).second.last_crawl_time = current_time;
                     evbuffer_add_printf(evb, "VALUE %s 0 %d\r\n", URL_QUEUE_KEY_NAME, url_queue->front().size());
                     evbuffer_add(evb, (const void*)(url_queue->front().c_str()), url_queue->front().size());
@@ -220,6 +221,10 @@ buffered_on_read(struct bufferevent *bev, void *arg)
         goto out;
     } else if (strncmp(cmd, "add", 3) == 0) {
         global_stats.cmd_pushs++;
+        if (*(cmd+3) == '\0' || *(cmd+4) == '\0') {
+            evbuffer_add_printf(evb, "CLIENT_ERROR %s\r\n", "format error");
+            goto out;
+        }
         const char *host_begin = cmd + 4;
         const char *host_end = strchr(host_begin, ' ');
         if (host_end == NULL) {
@@ -228,11 +233,33 @@ buffered_on_read(struct bufferevent *bev, void *arg)
         }
 
         const char *flags_begin = host_end + 1;
+        if (*flags_begin == 0) {
+            evbuffer_add_printf(evb, "CLIENT_ERROR %s\r\n", "format error");
+            goto out;
+        }
         const char *flags_end = strchr(flags_begin + 1, ' ');
+        if (flags_end == NULL) {
+            evbuffer_add_printf(evb, "CLIENT_ERROR %s\r\n", "format error");
+            goto out;
+        }
 
         const char *exptime_begin = flags_end + 1;
+        if (*exptime_begin == 0) {
+            evbuffer_add_printf(evb, "CLIENT_ERROR %s\r\n", "format error");
+            goto out;
+        }
         const char *exptime_end = strchr(exptime_begin + 1, ' ');
+        if (exptime_end == NULL) {
+            evbuffer_add_printf(evb, "CLIENT_ERROR %s\r\n", "format error");
+            goto out;
+        }
+
         const char *bytes_begin = exptime_end + 1;
+        if (*bytes_begin == 0) {
+            evbuffer_add_printf(evb, "CLIENT_ERROR %s\r\n", "format error");
+            goto out;
+        }
+
         const char *bytes_end = strchr(bytes_begin + 1 , ' ');
 
         int bytes_num = atoi(bytes_begin);
@@ -306,8 +333,121 @@ buffered_on_read(struct bufferevent *bev, void *arg)
 
         evbuffer_add_printf(evb, "%s\r\n", buf);
         goto out;
+    } else if (strncmp(cmd, "stat_host", 9) == 0) {
+        char *host_begin = cmd + 10;
 
+        std::string host;
+        if (*(cmd + 9) == 0 || *host_begin == 0) {
+        } else {
+            const char *host_end = strchr(host_begin, ' ');
+            if (host_end == NULL) {
+                host.append(host_begin);
+            } else {
+                host.append(host_begin, host_end - host_begin - 1);
+            }
+        }
+
+        char buf[1024];
+        memset(buf, 0, 1024);
+        std::string buf_str;
+        int sum = 0;
+        if (host.size() == 0) {
+            for (host_map_it_st it = global_host_map.begin(); it != global_host_map.end(); it++) {
+                sum += sprintf(buf + sum, "STAT %s stop %d\r\n", (*it).first.c_str(), (*it).second.stop);
+                sum += sprintf(buf + sum, "STAT %s enqueue_items %ld\r\n", (*it).first.c_str(), (*it).second.enqueue_items);
+                sum += sprintf(buf + sum, "STAT %s dequeue_items %ld\r\n", (*it).first.c_str(), (*it).second.dequeue_items);
+                buf_str.append(buf);
+                memset(buf, 0, 1024);
+                sum = 0;
+            }
+            buf_str.append("END\r\n");
+            evbuffer_add_printf(evb, "%s\r\n", buf_str.c_str());
+            goto out;
+        } else {
+            host_map_it_st it = global_host_map.find(host);
+            if (it == global_host_map.end()) {
+                sum += sprintf(buf + sum, "END\r\n");
+                evbuffer_add_printf(evb, "%s\r\n", buf);
+                goto out;
+            } else {
+                sum += sprintf(buf + sum, "STAT %s stop %d\r\n", (*it).first.c_str(), (*it).second.stop);
+                sum += sprintf(buf + sum, "STAT %s enqueue_items %ld\r\n", (*it).first.c_str(), (*it).second.enqueue_items);
+                sum += sprintf(buf + sum, "STAT %s dequeue_items %ld\r\n", (*it).first.c_str(), (*it).second.dequeue_items);
+                sum += sprintf(buf + sum, "END\r\n");
+                evbuffer_add_printf(evb, "%s\r\n", buf);
+                goto out;
+            }
+        }
+    } else if (strncmp(cmd, "stop_host", 9) == 0) {
+        char *host_begin = cmd + 10;
+
+        std::string host;
+        if (*(cmd + 9) == 0 || *host_begin == 0) {
+        } else {
+            const char *host_end = strchr(host_begin, ' ');
+            if (host_end == NULL) {
+                host.append(host_begin);
+            } else {
+                host.append(host_begin, host_end - host_begin - 1);
+            }
+        }
+
+        if (host.size() == 0) {
+            evbuffer_add_printf(evb, "CLIENT_ERROR %s\r\n", "no host specified");
+            goto out;
+        } else {
+            host_map_it_st it = global_host_map.find(host);
+            if (it == global_host_map.end()) {
+                evbuffer_add_printf(evb, "CLIENT_ERROR no host: %s found\r\n", host.c_str());
+                goto out;
+            } else {
+                (*it).second.stop = 1;
+                evbuffer_add_printf(evb, "%s\r\n", "stop_host ok");
+                goto out;
+            }
+        }
+    } else if (strncmp(cmd, "start_host", 10) == 0) {
+        char *host_begin = cmd + 11;
+        std::string host;
+        if (*(cmd + 9) == 0 || *host_begin == 0) {
+        } else {
+            const char *host_end = strchr(host_begin, ' ');
+            if (host_end == NULL) {
+                host.append(host_begin);
+            } else {
+                host.append(host_begin, host_end - host_begin - 1);
+            }
+        }
+
+        if (host.size() == 0) {
+            evbuffer_add_printf(evb, "CLIENT_ERROR %s\r\n", "no host specified");
+            goto out;
+        } else {
+            host_map_it_st it = global_host_map.find(host);
+            if (it == global_host_map.end()) {
+                evbuffer_add_printf(evb, "CLIENT_ERROR no host: %s found\r\n", host.c_str());
+                goto out;
+            } else {
+                (*it).second.stop = 0;
+                evbuffer_add_printf(evb, "%s\r\n", "start_host ok");
+                goto out;
+            }
+        }
     } else if (strncmp(cmd, "clear", 5) == 0) {
+    } else if (strncmp(cmd, "clear_host", 10) == 0) {
+        char *clear_host_begin = cmd + 11;
+        std::string clear_host(clear_host_begin);
+        host_map_it_st it = global_host_map.find(clear_host);
+        if (it == global_host_map.end()) {
+            evbuffer_add_printf(evb, "clear_host: %s not found\r\n", clear_host.c_str());
+            goto out;
+        } else {
+            while (!(*it).second.url_queue->empty()) {
+                (*it).second.url_queue->pop();
+            }
+            evbuffer_add_printf(evb, "clear_host: %s ok\r\n", clear_host.c_str());
+            goto out;
+        }
     } else if (strncmp(cmd, "set_debug", 9) == 0) {
         char *debug_str_begin = cmd + 10;
         debug = atoi(debug_str_begin);
