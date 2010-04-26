@@ -27,7 +27,7 @@ bool UrlQueueClient::push(const std::string host, const std::string content)
     memcached_return rc;
     rc = memcached_add(queue, host.c_str(), host.length(),
                 content.c_str(), content.length(),
-                1, NULL);
+                1, 0);
 
     if (rc == MEMCACHED_SUCCESS) {
         return true;
