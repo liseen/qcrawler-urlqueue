@@ -299,8 +299,10 @@ buffered_on_read(struct bufferevent *bev, void *arg)
                 std::queue<std::string> *url_queue = new std::queue<std::string>();
                 url_queue->push(content);
                 host_st new_host;
+                memset((void*)&new_host, 0, sizeof(host_st));
                 new_host.enqueue_items = 1;
                 new_host.dequeue_items = 0;
+                new_host.stop = 0;
                 new_host.url_queue = url_queue;
                 new_host.last_crawl_time = 0;
                 global_host_map[host] = new_host;
