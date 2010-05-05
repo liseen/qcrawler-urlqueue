@@ -21,7 +21,7 @@
 #include <event.h>
 
 #include <string>
-#include <queue>
+#include <list>
 #include <map>
 
 #define VERSION "0.0.2"
@@ -54,14 +54,16 @@ typedef struct host_st{
     unsigned long dequeue_items;
     unsigned int stop;
     unsigned int last_crawl_time;
-    std::queue<std::string> *url_queue;
+    /* url queue */
+    std::list<std::string> url_queue;
 } host_st;
 
 static stat_st global_stats;
-typedef std::map<std::string, host_st> host_map_st;
-typedef std::map<std::string, host_st>::iterator host_map_it_st;
+typedef std::map<std::string, host_st*> host_map_st;
+typedef std::map<std::string, host_st*>::iterator host_map_it_st;
 
 static int debug = 0;
+static int global_stop = 0;
 static std::string quit_dump_file;
 static struct event_base *main_base;
 static host_map_st global_host_map;
@@ -160,10 +162,10 @@ buffered_on_read(struct bufferevent *bev, void *arg)
     struct evbuffer *evb;
     char *cmd;
     const char *pattern, *bytes;
-    char buf[MAX_MESSAGE_SIZE];
+    char read_buf[MAX_MESSAGE_SIZE];
     int i;
 
-    *buf = '\0';
+    *read_buf = '\0';
     cmd = evbuffer_readline(bev->input);
     if (cmd == NULL) {
         return;
@@ -179,6 +181,11 @@ buffered_on_read(struct bufferevent *bev, void *arg)
             goto out;
         }
 
+        if (global_stop) {
+            evbuffer_add_printf(evb, "END\r\n");
+            goto out;
+        }
+
         do {
             if (global_host_map_it == global_host_map.end()) {
                 global_host_map_it = global_host_map.begin();
@@ -187,30 +194,29 @@ buffered_on_read(struct bufferevent *bev, void *arg)
             }
 
             if (global_host_map_it != global_host_map.end()) {
-                std::queue<std::string> *url_queue = (*global_host_map_it).second.url_queue;
-                if (!(*global_host_map_it).second.stop && !url_queue->empty()) {
-                    int need_sleep_time = (*global_host_map_it).second.last_crawl_time + sleep_cycle - current_time;
+                host_st *host_ptr = global_host_map_it->second;
+                std::list<std::string> *url_queue = &host_ptr->url_queue;
+                if (!host_ptr->stop && !url_queue->empty()) {
+                    int need_sleep_time = host_ptr->last_crawl_time + sleep_cycle - current_time;
                     if (need_sleep_time > 0) {
                         evbuffer_add_printf(evb, "END\r\n", need_sleep_time);
                         global_host_map_it--;
                         goto out;
                     }
-                    (*global_host_map_it).second.dequeue_items++;
-                    (*global_host_map_it).second.last_crawl_time = current_time;
-                    evbuffer_add_printf(evb, "VALUE %s 0 %d\r\n", URL_QUEUE_KEY_NAME, url_queue->front().size());
-                    evbuffer_add(evb, (const void*)(url_queue->front().c_str()), url_queue->front().size());
-                    evbuffer_add_printf(evb, "\r\nEND\r\n");
+                    host_ptr->dequeue_items++;
+                    host_ptr->last_crawl_time = current_time;
+                    evbuffer_add_printf(evb, "VALUE %s 0 %d\r\n%*s\r\nEND\r\n", \
+                            URL_QUEUE_KEY_NAME, \
+                            url_queue->front().size(), \
+                            url_queue->front().size(), url_queue->front().c_str());
 
                     if (debug) {
-                        printf("shift host: %s\n", (*global_host_map_it).first.c_str());
-                        printf("shift content: ");
-                        for (int i = 0; i < url_queue->front().size(); i++) {
-                            int v = (int)(url_queue->front())[i];
-                            printf("%d ", v);
-                        }
+                        printf("shift host: %s\n", global_host_map_it->first.c_str());
+                        printf("shift content: %*s", url_queue->front().size(), url_queue->front().c_str());
                         printf("\n");
                     }
-                    url_queue->pop();
+                    url_queue->pop_front();
+
                     global_stats.dequeue_items++;
                     goto out;
                 }
@@ -275,16 +281,16 @@ buffered_on_read(struct bufferevent *bev, void *arg)
             fprintf(stdout, "push host: %s bytes_num: %d\n", host.c_str(), bytes_num);
         }
 
-        int read_cnt = bufferevent_read(bev, buf, bytes_num + 2);
+        int read_cnt = bufferevent_read(bev, read_buf, bytes_num + 2);
         if (read_cnt <= 0) {
             evbuffer_add_printf(evb, "ERROR %s\r\n", "read error");
             goto out;
-        } else if (read_cnt != bytes_num + 2 || buf[read_cnt-1] != '\n' || buf[read_cnt-2] != '\r' ) {
+        } else if (read_cnt != bytes_num + 2 || read_buf[read_cnt-1] != '\n' || read_buf[read_cnt-2] != '\r' ) {
             evbuffer_add_printf(evb, "CLIENT_ERROR %s\r\n", "format error");
             goto out;
         } else {
             std::string content;
-            content.append(buf, read_cnt - 2);
+            content.append(read_buf, read_cnt - 2);
             if (debug > 1) {
                 printf("push content: ");
                 for (int i = 0; i < content.size(); i++) {
@@ -296,19 +302,16 @@ buffered_on_read(struct bufferevent *bev, void *arg)
 
             host_map_it_st it = global_host_map.find(host);
             if (it == global_host_map.end()) {
-                std::queue<std::string> *url_queue = new std::queue<std::string>();
-                url_queue->push(content);
-                host_st new_host;
-                memset((void*)&new_host, 0, sizeof(host_st));
-                new_host.enqueue_items = 1;
-                new_host.dequeue_items = 0;
-                new_host.stop = 0;
-                new_host.url_queue = url_queue;
-                new_host.last_crawl_time = 0;
+                host_st *new_host = new host_st();
+                new_host->enqueue_items = 1;
+                new_host->dequeue_items = 0;
+                new_host->stop = 0;
+                new_host->last_crawl_time = 0;
+                new_host->url_queue.push_back(content);
                 global_host_map[host] = new_host;
             } else {
-                (*it).second.enqueue_items++;
-                (*it).second.url_queue->push(content);
+                it->second->enqueue_items++;
+                it->second->url_queue.push_back(content);
             }
             global_stats.enqueue_items++;
             evbuffer_add_printf(evb, "STORED\r\n");
@@ -349,37 +352,35 @@ buffered_on_read(struct bufferevent *bev, void *arg)
             }
         }
 
-        char buf[1024];
-        memset(buf, 0, 1024);
-        std::string buf_str;
-        int sum = 0;
         if (host.size() == 0) {
             for (host_map_it_st it = global_host_map.begin(); it != global_host_map.end(); it++) {
-                sum += sprintf(buf + sum, "STAT %s stop %d\r\n", (*it).first.c_str(), (*it).second.stop);
-                sum += sprintf(buf + sum, "STAT %s enqueue_items %ld\r\n", (*it).first.c_str(), (*it).second.enqueue_items);
-                sum += sprintf(buf + sum, "STAT %s dequeue_items %ld\r\n", (*it).first.c_str(), (*it).second.dequeue_items);
-                buf_str.append(buf);
-                memset(buf, 0, 1024);
-                sum = 0;
+                evbuffer_add_printf(evb, "STAT %s stop %d\r\n", it->first.c_str(), it->second->stop);
+                evbuffer_add_printf(evb, "STAT %s enqueue_items %ld\r\n", it->first.c_str(), it->second->enqueue_items);
+                evbuffer_add_printf(evb, "STAT %s dequeue_items %ld\r\n", it->first.c_str(), it->second->dequeue_items);
             }
-            buf_str.append("END\r\n");
-            evbuffer_add_printf(evb, "%s\r\n", buf_str.c_str());
+            evbuffer_add_printf(evb, "END\r\n");
             goto out;
         } else {
             host_map_it_st it = global_host_map.find(host);
             if (it == global_host_map.end()) {
-                sum += sprintf(buf + sum, "END\r\n");
-                evbuffer_add_printf(evb, "%s\r\n", buf);
+                evbuffer_add_printf(evb, "END\r\n");
                 goto out;
             } else {
-                sum += sprintf(buf + sum, "STAT %s stop %d\r\n", (*it).first.c_str(), (*it).second.stop);
-                sum += sprintf(buf + sum, "STAT %s enqueue_items %ld\r\n", (*it).first.c_str(), (*it).second.enqueue_items);
-                sum += sprintf(buf + sum, "STAT %s dequeue_items %ld\r\n", (*it).first.c_str(), (*it).second.dequeue_items);
-                sum += sprintf(buf + sum, "END\r\n");
-                evbuffer_add_printf(evb, "%s\r\n", buf);
+                evbuffer_add_printf(evb, "STAT %s stop %d\r\n", it->first.c_str(), it->second->stop);
+                evbuffer_add_printf(evb, "STAT %s enqueue_items %ld\r\n", it->first.c_str(), it->second->enqueue_items);
+                evbuffer_add_printf(evb, "STAT %s dequeue_items %ld\r\n", it->first.c_str(), it->second->dequeue_items);
+                evbuffer_add_printf(evb, "END\r\n");
                 goto out;
             }
         }
+    } else if (strncmp(cmd, "global_start", 12) == 0) {
+        global_stop =  0;
+        evbuffer_add_printf(evb, "%s\r\n", "global_start ok");
+        goto out;
+    } else if (strncmp(cmd, "global_stop", 11) == 0) {
+        global_stop = 1;
+        evbuffer_add_printf(evb, "%s\r\n", "global_stop ok");
+        goto out;
     } else if (strncmp(cmd, "stop_host", 9) == 0) {
         char *host_begin = cmd + 10;
 
@@ -403,7 +404,7 @@ buffered_on_read(struct bufferevent *bev, void *arg)
                 evbuffer_add_printf(evb, "CLIENT_ERROR no host: %s found\r\n", host.c_str());
                 goto out;
             } else {
-                (*it).second.stop = 1;
+                it->second->stop = 1;
                 evbuffer_add_printf(evb, "%s\r\n", "stop_host ok");
                 goto out;
             }
@@ -430,7 +431,7 @@ buffered_on_read(struct bufferevent *bev, void *arg)
                 evbuffer_add_printf(evb, "CLIENT_ERROR no host: %s found\r\n", host.c_str());
                 goto out;
             } else {
-                (*it).second.stop = 0;
+                it->second->stop = 0;
                 evbuffer_add_printf(evb, "%s\r\n", "start_host ok");
                 goto out;
             }
@@ -444,9 +445,7 @@ buffered_on_read(struct bufferevent *bev, void *arg)
             evbuffer_add_printf(evb, "clear_host: %s not found\r\n", clear_host.c_str());
             goto out;
         } else {
-            while (!(*it).second.url_queue->empty()) {
-                (*it).second.url_queue->pop();
-            }
+            it->second->url_queue.clear();
             evbuffer_add_printf(evb, "clear_host: %s ok\r\n", clear_host.c_str());
             goto out;
         }
@@ -676,10 +675,9 @@ main(int argc, char **argv)
         } else {
             for (host_map_it_st it = global_host_map.begin(); it != global_host_map.end(); it++) {
                 std::string host = (*it).first;
-                std::queue<std::string> *url_queue = (*global_host_map_it).second.url_queue;
-                while (!url_queue->empty()) {
-                    fprintf(outFile, "VALUE %s 0 %d\r\n%*s\r\n", host.c_str(), url_queue->front().size(), url_queue->front().size(), url_queue->front().c_str());
-                    url_queue->pop();
+                while (!it->second->url_queue.empty()) {
+                    fprintf(outFile, "VALUE %s 0 %d\r\n%*s\r\n", host.c_str(), it->second->url_queue.front().size(), it->second->url_queue.front().size(), it->second->url_queue.front().c_str());
+                    it->second->url_queue.pop_front();
                 }
             }
             fprintf(outFile, "END\r\n");

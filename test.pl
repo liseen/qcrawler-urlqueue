@@ -19,7 +19,7 @@ my $memd = new Cache::Memcached {
 };
 
 for my $i (1..10) {
-    $memd->add("host.host.host" . $i, "a". ("$i" x 200) . "a");
+    $memd->add("host.host.host" . $i % 10, "a". ("$i" x 200) . "a");
 }
 
 for my $i (1..10) {
