@@ -205,14 +205,14 @@ buffered_on_read(struct bufferevent *bev, void *arg)
                     }
                     host_ptr->dequeue_items++;
                     host_ptr->last_crawl_time = current_time;
-                    evbuffer_add_printf(evb, "VALUE %s 0 %d\r\n%*s\r\nEND\r\n", \
+                    evbuffer_add_printf(evb, "VALUE %s 0 %d\r\n%.*s\r\nEND\r\n", \
                             URL_QUEUE_KEY_NAME, \
-                            url_queue->front().size(), \
-                            url_queue->front().size(), url_queue->front().c_str());
+                            (int)url_queue->front().size(), \
+                            (int)url_queue->front().size(), url_queue->front().c_str());
 
                     if (debug) {
                         printf("shift host: %s\n", global_host_map_it->first.c_str());
-                        printf("shift content: %*s", url_queue->front().size(), url_queue->front().c_str());
+                        printf("shift content: %.*s", (int)url_queue->front().size(), url_queue->front().c_str());
                         printf("\n");
                     }
                     url_queue->pop_front();
@@ -327,7 +327,7 @@ buffered_on_read(struct bufferevent *bev, void *arg)
         sum += sprintf(buf + sum, "STAT time %d\r\n", time);
         sum += sprintf(buf + sum, "STAT debug %d\r\n", debug);
         sum += sprintf(buf + sum, "STAT sleep_cycle %d\r\n", sleep_cycle);
-        sum += sprintf(buf + sum, "STAT host_items %d\r\n", global_host_map.size());
+        sum += sprintf(buf + sum, "STAT host_items %d\r\n", (int)global_host_map.size());
         sum += sprintf(buf + sum, "STAT enqueue_items %ld\r\n", global_stats.enqueue_items);
         sum += sprintf(buf + sum, "STAT dequeue_items %ld\r\n", global_stats.dequeue_items);
         sum += sprintf(buf + sum, "STAT cmd_pushs %ld\r\n", global_stats.cmd_pushs);
@@ -676,7 +676,7 @@ main(int argc, char **argv)
             for (host_map_it_st it = global_host_map.begin(); it != global_host_map.end(); it++) {
                 std::string host = (*it).first;
                 while (!it->second->url_queue.empty()) {
-                    fprintf(outFile, "VALUE %s 0 %d\r\n%*s\r\n", host.c_str(), it->second->url_queue.front().size(), it->second->url_queue.front().size(), it->second->url_queue.front().c_str());
+                    fprintf(outFile, "VALUE %s 0 %d\r\n%*s\r\n", host.c_str(), (int)it->second->url_queue.front().size(), (int)it->second->url_queue.front().size(), it->second->url_queue.front().c_str());
                     it->second->url_queue.pop_front();
                 }
             }

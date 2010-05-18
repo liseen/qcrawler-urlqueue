@@ -3,7 +3,7 @@ prefix=/opt/qcrawler-thirdparty
 .PHONY: all clean distclean
 
 CC=g++
-CPPFLAGS=-g -o0 -I/opt/qcrawler-thirdparty/include
+CPPFLAGS=-g -O2 -I/opt/qcrawler-thirdparty/include
 LIBS=-L/opt/qcrawler-thirdparty/lib
 
 MODULES		= liburlqueue.so
