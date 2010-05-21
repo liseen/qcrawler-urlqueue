@@ -205,14 +205,20 @@ buffered_on_read(struct bufferevent *bev, void *arg)
                     }
                     host_ptr->dequeue_items++;
                     host_ptr->last_crawl_time = current_time;
-                    evbuffer_add_printf(evb, "VALUE %s 0 %d\r\n%.*s\r\nEND\r\n", \
+
+                    evbuffer_add_printf(evb, "VALUE %s 0 %d\r\n", URL_QUEUE_KEY_NAME, url_queue->front().size());
+                    evbuffer_add(evb, (const void*)(url_queue->front().c_str()), url_queue->front().size());
+                    evbuffer_add_printf(evb, "\r\nEND\r\n");
+
+/*
+                    evbuffer_add_printf(evb, "VALUE %s 0 %d\r\n%*s\r\nEND\r\n", \
                             URL_QUEUE_KEY_NAME, \
                             (int)url_queue->front().size(), \
                             (int)url_queue->front().size(), url_queue->front().c_str());
-
+*/
                     if (debug) {
                         printf("shift host: %s\n", global_host_map_it->first.c_str());
-                        printf("shift content: %.*s", (int)url_queue->front().size(), url_queue->front().c_str());
+                        printf("shift content: %*s", (int)url_queue->front().size(), url_queue->front().c_str());
                         printf("\n");
                     }
                     url_queue->pop_front();
